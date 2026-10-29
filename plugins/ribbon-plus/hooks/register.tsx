@@ -1,13 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { CacheFacts, Size, Window } from '../types'
+import type { Burn, CacheFacts, Size, Streak, Turn, Window } from '../types'
 import {
   BG, EMPTY, HUE, INK, MUTED, ROBO_SIZE, TEXT, TTL_MIN, TTL_MS, WORD,
   bandPx, cardSvg, chipSvg, costOf, familyOf, fmtIdle, kindOf, mineModel, roboSvg, usd,
 } from './cache-art'
-import type { CacheView } from './cache-art'
+import type { CacheView, Stats } from './cache-art'
 import { activitySvg, activityText, push } from './activity'
+import { JOIN_GAP, joinSvg, midSvg, rampColor } from './mid'
+import type { Gauge } from './mid'
 import type { Activity } from './activity'
 
 // A band above the prompt in a warm dark look: card surface, cream text,
@@ -21,6 +23,9 @@ import type { Activity } from './activity'
 // it reads the engine's own figures and draws.
 
 const CELLS = 10
+/** A cell of the pane in CSS pixels as the app draws it, and the share of the 12 px the layouts assume. */
+const CELL_PX = 8.4
+const SCALE = CELL_PX / 12
 const LOW_AT = 15
 const TINY_CELLS = 8
 const TIGHT_CELLS = 6
@@ -30,6 +35,13 @@ const TICK_MS = 30_000
 const windows = atom({ plugin: 'ribbon-plus', key: 'windows' } as const, [] as Window[])
 const cache = atom({ plugin: 'ribbon-plus', key: 'cache' } as const, null as CacheFacts | null)
 // 'tiny' (the default) is one quiet row of bars; 'normal' is the full band.
+// When the 5-hour window's reading began, and where it stood: the burn rate is measured from there.
+const burn = atom({ plugin: 'ribbon-plus', key: 'burn' } as const, null as Burn | null, { shape: 'burn-1' })
+// How full the context window has been after each turn, as percent, for the sparkline.
+const ctx = atom({ plugin: 'ribbon-plus', key: 'ctx' } as const, [] as number[], { shape: 'ctx-1' })
+// Turns that began with the cache warm in a row, and how many began cold.
+const streak = atom({ plugin: 'ribbon-plus', key: 'streak' } as const, { run: 0, colds: 0 } as Streak, { shape: 'streak-1' })
+const turn = atom({ plugin: 'ribbon-plus', key: 'turn' } as const, { tools: 0, startedAt: 0, durs: [], lastTools: 0, lastMs: 0 } as Turn, { shape: 'turn-1' })
 const size = atom({ plugin: 'ribbon-plus', key: 'size' } as const, 'tiny' as Size)
 // The choice is kept in the plugin's store so it holds across sessions.
 const activity = atom({ plugin: 'ribbon-plus', key: 'activity' } as const, { active: false, at: [] } as Activity, { shape: 'activity-1' })
@@ -50,31 +62,8 @@ const cycle = async ($: EngineInterface): Promise<void> => {
 }
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
+const LONG: Record<string, string> = { seven_day: '7 DAY', five_hour: '5 HOUR' }
 const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
-// Color follows how much is left: green when full, walking up the ramp through
-// lime, yellow and orange to red as the window runs out.
-const RAMP: [number, [number, number, number]][] = [
-  [100, [0x3e, 0xcf, 0x6e]],
-  [65, [0xa3, 0xd1, 0x3f]],
-  [40, [0xf5, 0xc5, 0x23]],
-  [20, [0xff, 0x8a, 0x1a]],
-  [0, [0xff, 0x3b, 0x30]],
-]
-
-const rampColor = (left: number): string => {
-  const v = Math.max(0, Math.min(100, left))
-  for (let i = 0; i < RAMP.length - 1; i++) {
-    const [hi, a] = RAMP[i]
-    const [lo, b] = RAMP[i + 1]
-    if (v <= hi && v >= lo) {
-      const t = (hi - v) / (hi - lo)
-      const c = a.map((x, k) => Math.round(x + (b[k] - x) * t))
-      return `#${c.map(x => x.toString(16).padStart(2, '0')).join('')}`
-    }
-  }
-  return TEXT
-}
-
 const clean = (list: readonly Window[]): Window[] =>
   list
     .map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt }))
@@ -111,9 +100,55 @@ export const viewOf = (c: CacheFacts | null, now: number): CacheView | null => {
   }
 }
 
+/** Remember where the 5-hour window stood when first seen; a lower reading means it reset. */
+const trackBurn = async ($: EngineInterface, list: readonly Window[]): Promise<void> => {
+  const five = list.find(w => w.kind === 'five_hour')
+  if (!five) return
+  const now = await $.clock.now()
+  const cur = await read($, burn)
+  if (!cur || five.percentUsed < cur.p0 - 0.5) await update($, burn, () => ({ t0: now, p0: five.percentUsed }))
+}
+
+/** The card's last row: cost so far, session length, and how fast the 5-hour window fills. */
+const statsOf = async ($: EngineInterface, now: number): Promise<Stats> => {
+  const u = await $.session.usage()
+  const five = (await read($, windows)).find(w => w.kind === 'five_hour')
+  const b = await read($, burn)
+  const stats: Stats = { cost: u.cost?.usd, sessionMs: Math.max(0, now - u.startedAt) }
+  if (five?.resetsAt) {
+    const ms = Date.parse(five.resetsAt) - now
+    if (!Number.isNaN(ms) && ms > 0) stats.resetIn = fmtIdle(ms)
+  }
+  if (five && b) {
+    const hours = (now - b.t0) / 3_600_000
+    const used = five.percentUsed - b.p0
+    if (hours >= 0.05 && used >= 0) {
+      stats.rate = used / hours
+      if (stats.rate > 0.05) {
+        const toFull = (100 - five.percentUsed) / stats.rate
+        stats.limitIn = fmtIdle(toFull * 3_600_000)
+        const resetH = five.resetsAt ? (Date.parse(five.resetsAt) - now) / 3_600_000 : Infinity
+        stats.isSafe = toFull > resetH
+      }
+    }
+  }
+  stats.ctx = await read($, ctx)
+  const s = await read($, streak)
+  stats.warmRun = s.run
+  stats.colds = s.colds
+  const t = await read($, turn)
+  const live = t.startedAt > 0
+  stats.turnTools = live ? t.tools : t.lastTools
+  const elapsed = live ? now - t.startedAt : t.lastMs
+  if (stats.turnTools > 0 && elapsed > 5000) stats.toolsPerMin = stats.turnTools / (elapsed / 60000)
+  if (t.durs.length > 0) stats.avgTurnMs = t.durs.reduce((a, b) => a + b, 0) / t.durs.length
+  return stats
+}
+
 const pull = async ($: EngineInterface): Promise<void> => {
   const u = await $.session.usage()
   await update($, windows, () => clean(u.rateLimits))
+  await trackBurn($, clean(u.rateLimits))
 }
 
 /** Fresh context figures from the engine onto the cache facts, when it has them. */
@@ -154,6 +189,9 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, activity, a => push(a, now, true))
+    await update($, turn, t => ({ ...t, tools: 0, startedAt: now }))
+
+    await update($, turn, t => ({ ...t, tools: 0, startedAt: now }))
 
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -162,12 +200,15 @@ export const register: Register = on => {
     const now = await $.clock.now()
     await update($, activity, a => push(a, now, true))
 
+    await update($, turn, t => ({ ...t, tools: t.tools + 1 }))
+
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
       await update($, windows, () => clean(e.rateLimits))
+      await trackBurn($, clean(e.rateLimits))
     }
     if (e.changed.includes('context') && e.context.tokens && e.context.tokens > 0) {
       const tokens = e.context.tokens
@@ -197,6 +238,11 @@ export const register: Register = on => {
     if (!e.agentId) {
       const now = await $.clock.now()
       await update($, activity, a => push(a, now, true))
+      const prev = await read($, cache)
+      if (prev && prev.lastAt > 0) {
+        const isWarm = now - prev.lastAt < TTL_MS
+        await update($, streak, s => (isWarm ? { run: s.run + 1, colds: s.colds } : { run: 0, colds: s.colds + 1 }))
+      }
       await update($, cache, c => ({ lastAt: now, tokens: c?.tokens ?? 0, window: c?.window ?? 0, model: c?.model ?? null }))
     }
     yield* next(e)
@@ -211,6 +257,15 @@ export const register: Register = on => {
     // turn.step stamps the exact request time; when no step of this turn did, the turn's end is the floor.
     const lastAt = !c || now - c.lastAt > e.durationMs ? now : c.lastAt
     await measure($, lastAt, e.usage?.model ?? null)
+    const t = await read($, turn)
+    if (t.startedAt > 0) {
+      const ms = now - t.startedAt
+      await update($, turn, o => ({ tools: 0, startedAt: 0, durs: [...o.durs, ms].slice(-20), lastTools: o.tools, lastMs: ms }))
+    }
+    const after = await read($, cache)
+    if (after && after.window > 0 && after.tokens > 0) {
+      await update($, ctx, list => [...list, Math.min(100, Math.round((after.tokens / after.window) * 100))].slice(-24))
+    }
     return r
   })
 
@@ -266,8 +321,9 @@ export const register: Register = on => {
           ) : null}
           <Box flexGrow={1} />
           {beat}
-          <Text> </Text>
-          <Button key="size" label="▲" onPress={() => setSize($, 'mid')} />
+          <Box marginLeft={2} flexShrink={0}>
+            <Button key="size" label="▲" onPress={() => setSize($, 'mid')} />
+          </Box>
         </Box>
       )
     }
@@ -337,6 +393,29 @@ export const register: Register = on => {
       </Box>
     )
     const down = <Button key="size-down" label="▼" onPress={() => stepDown($)} />
+    // Where the surface can draw SVG the band is a row of cards; the narrowest panes and the terminal keep the text form.
+    const useMid = Svg !== null && kind !== 'tight' && list.length > 0
+    // The pane's cells measure about 7.8 px, not the 12 the drawings are laid out in, so the drawings
+    // are drawn at SCALE of their layout size: the box then matches the picture and nothing is left over.
+    const slotPx = (columns + 5) * CELL_PX
+    const midPx = Math.max(240, Math.round(slotPx - 110))
+    const midW = Math.round(midPx / SCALE)
+    const gauges: Gauge[] = list.map(w => ({
+      name: LONG[w.kind] ?? (NAMES[w.kind] ?? w.kind.toUpperCase()),
+      left: Math.max(0, Math.round(100 - w.percentUsed)),
+      reset: fmtReset(w.resetsAt, now) || 'soon',
+    }))
+    const midEl =
+      useMid && Svg ? (
+        <Svg
+          key="mid"
+          source={midSvg(midW, gauges, await read($, activity), now)}
+          alt={`Usage left: ${gauges.map(g => `${g.name} ${g.left}%`).join(', ')}`}
+          width={midPx}
+          height={Math.round(70 * SCALE)}
+          isInteractive
+        />
+      ) : null
     const usage = list.length > 0
       ? list.map(isWide ? wide : stacked)
       : [<Box key="wait" flexShrink={0} marginRight={3}><Text color={MUTED}>waiting for the first reply</Text></Box>]
@@ -344,11 +423,11 @@ export const register: Register = on => {
     // Before the first reply there is no cache to show: today's band, as it was.
     if (!view) {
       return (
-        <Box flexDirection="row" backgroundColor={BG} paddingX={1}>
-          {label}
-          {usage}
+        <Box flexDirection="row" backgroundColor={BG} paddingX={1} alignItems="center">
+          {useMid ? midEl : label}
+          {useMid ? null : usage}
           <Box flexGrow={1} />
-          {down}
+          <Box marginLeft={2} flexShrink={0}>{down}</Box>
         </Box>
       )
     }
@@ -379,15 +458,27 @@ export const register: Register = on => {
       : [<Text key="left" color={hue} bold>{` ${Math.max(0, TTL_MIN - view.idleMin)}m left`}</Text>]
 
     const button = (
-      <Box key="arrows" flexShrink={0} alignItems="flex-start" flexDirection="row">
+      <Box key="arrows" flexShrink={0} alignItems="flex-start" flexDirection="row" marginLeft={2}>
         {down}
-        {Svg && !open ? <Button key="size-up" label="▲" onPress={() => setSize($, 'large')} /> : null}
+        {Svg && !open ? (
+          <Box marginLeft={1}>
+            <Button key="size-up" label="▲" onPress={() => setSize($, 'large')} />
+          </Box>
+        ) : null}
       </Box>
     )
     const grow = <Box key="grow" flexGrow={1} />
 
     let rows
-    if (kind === 'wide') {
+    if (useMid) {
+      rows = (
+        <Box key="row" flexDirection="row" paddingX={1} alignItems="center">
+          {midEl}
+          {grow}
+          {button}
+        </Box>
+      )
+    } else if (kind === 'wide') {
       rows = (
         <Box key="row" flexDirection="row" paddingX={1} alignItems="center">
           {label}
@@ -441,8 +532,26 @@ export const register: Register = on => {
     }
 
     let card = null
-    if (open && Svg) {
-      const c = cardSvg(view, kind, bandPx(columns))
+    if (open && Svg && useMid) {
+      // One drawing for the cards and the panel under them, so nothing can open between.
+      // The panel spans the full width; the cards above it stop short of the arrow, which floats over the corner.
+      // Drawn as a plain image, not a frame: a frame reloads on every refresh and flickers.
+      const fullPx = Math.round((columns + 3) * CELL_PX)
+      const fullW = Math.round(fullPx / SCALE)
+      const cardsW = Math.round((columns * CELL_PX - 48) / SCALE)
+      const c = cardSvg(view, kind, fullW, await statsOf($, now))
+      const top = midSvg(cardsW, gauges, await read($, activity), now)
+      const one = joinSvg(fullW, 70, top, c.source, c.h)
+      rows = (
+        <Box key="row" flexDirection="row" position="relative">
+          <Svg key="one" source={one} alt={c.alt} width={fullPx} height={Math.round((70 + JOIN_GAP + c.h) * SCALE)} />
+          <Box position="absolute" top={0} right={0}>
+            {down}
+          </Box>
+        </Box>
+      )
+    } else if (open && Svg) {
+      const c = cardSvg(view, kind, bandPx(columns), await statsOf($, now))
       card = (
         <Box key="card" flexDirection="row">
           <Svg source={c.source} alt={c.alt} width={c.w} height={c.h} isInteractive={kind !== 'tight'} />

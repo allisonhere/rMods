@@ -208,7 +208,31 @@ type TextOpts = { size?: number; w?: number; fill?: string; ls?: number; anchor?
 /** The gap between the row and the card, drawn inside the card. */
 const CARD_TOP = 0
 
-export const cardSvg = (v: CacheView, kind: Kind, W: number): { source: string; w: number; h: number; alt: string } => {
+/** The session's own figures, for the card's last row. */
+export type Stats = {
+  /** Dollars spent so far, when the host keeps a ledger. */
+  cost?: number
+  sessionMs: number
+  /** When the 5-hour window resets, written out. */
+  resetIn?: string
+  /** Percent of the 5-hour window used per hour, since the window began or the band first saw it. */
+  rate?: number
+  /** How long until the 5-hour window is full at that rate. */
+  limitIn?: string
+  /** True when the window resets before it would fill. */
+  isSafe?: boolean
+  /** Context fill after each recent turn, percent, oldest first. */
+  ctx?: number[]
+  /** Turns in a row that began with the cache warm, and how many began cold. */
+  warmRun?: number
+  colds?: number
+  /** Tool calls in the running turn, or the last one when none runs. */
+  turnTools?: number
+  toolsPerMin?: number
+  avgTurnMs?: number
+}
+
+export const cardSvg = (v: CacheView, kind: Kind, W: number, st: Stats | null = null): { source: string; w: number; h: number; alt: string } => {
   const mode = v.mode
   const cold = mode === 'cold'
   const HUEM = HUE[mode]
@@ -280,7 +304,7 @@ export const cardSvg = (v: CacheView, kind: Kind, W: number): { source: string; 
   const zoneCost = (x: number, y: number, colW: number, o: { compact?: boolean } = {}) => {
     const k = o.compact
       ? { lab: 20, base: 86, rows: 6, step: 6, chip: 33, price: 72, name: 89 }
-      : { lab: 18, base: 90, rows: 8, step: 6.5, chip: 38, price: 80, name: 98 }
+      : { lab: 18, base: 84, rows: 8, step: 6.5, chip: 32, price: 74, name: 92 }
     let g = t(x, y + k.lab, cold ? 'NEXT MESSAGE COSTS' : 'NEXT MESSAGE COSTS, CACHED', { ls: 1.4 })
     const top = Math.max(...MODELS.map(m => coldCost(m, v.tokens)))
     MODELS.forEach((m, i) => {
@@ -297,31 +321,111 @@ export const cardSvg = (v: CacheView, kind: Kind, W: number): { source: string; 
     return g
   }
 
+  // Cost, session length and the 5-hour burn rate: a row under the zones.
+  const zoneStats = (y: number, o: { compact?: boolean } = {}) => {
+    if (!st) return ''
+    const colW = (W - 26) / 3
+    const big = o.compact ? 20 : 26
+    const cell = (i: number, lab: string, val: string, cap: string, fill = TEXT) => {
+      const x = 13 + i * colW + (i > 0 ? 14 : 0)
+      return (
+        t(x, y + 20, lab, { ls: 1.4 }) +
+        t(x, y + 20 + big + 4, val, { size: big, w: 600, fill }) +
+        t(x, y + 20 + big + 22, cap, { size: 12, w: 500 })
+      )
+    }
+    const burn = st.rate === undefined ? '—' : `${st.rate >= 10 ? Math.round(st.rate) : st.rate.toFixed(1)}%/h`
+    const burnCap = st.rate === undefined ? 'warming up' : st.limitIn ? (st.isSafe ? `full in ${st.limitIn}, resets first` : `full in ${st.limitIn}`) : 'no burn yet'
+    const burnFill = st.rate === undefined || st.limitIn === undefined ? TEXT : st.isSafe ? '#3ecf6e' : '#ff8a1a'
+    return (
+      cell(0, 'SESSION COST', st.cost === undefined ? '—' : usd(st.cost), 'spent so far') +
+      vline(13 + colW + 6, y + 8, o.compact ? 52 : 60) +
+      cell(1, 'SESSION', fmtIdle(st.sessionMs), st.resetIn ? `5H resets in ${st.resetIn}` : 'running') +
+      vline(13 + 2 * colW + 6, y + 8, o.compact ? 52 : 60) +
+      cell(2, '5H BURN', burn, burnCap, burnFill)
+    )
+  }
+  // The same three figures squeezed into the white space right of a zone, as three lines.
+  const zoneSide = (x: number, y: number, w: number) => {
+    if (!st) return ''
+    const burn = st.rate === undefined ? '—' : `${st.rate >= 10 ? Math.round(st.rate) : st.rate.toFixed(1)}%/h`
+    const burnFill = st.rate === undefined || st.limitIn === undefined ? TEXT : st.isSafe ? '#3ecf6e' : '#ff8a1a'
+    const burnCap = st.rate === undefined ? 'warming up' : st.limitIn ? (st.isSafe ? `full in ${st.limitIn}, resets first` : `full in ${st.limitIn}`) : 'no burn yet'
+    const row = (ly: number, lab: string, val: string, fill = TEXT) =>
+      t(x, ly, lab, { ls: 1.4 }) + t(x + w, ly, val, { size: 17, w: 600, fill, anchor: 'end' })
+    return (
+      row(y + 22, 'COST', st.cost === undefined ? '—' : usd(st.cost)) +
+      row(y + 48, w < 130 ? 'TIME' : 'SESSION', fmtIdle(st.sessionMs)) +
+      row(y + 74, w < 130 ? 'BURN' : '5H BURN', burn, burnFill) +
+      t(x + w, y + 90, burnCap, { size: 11, w: 500, anchor: 'end' })
+    )
+  }
+  // A second column of three: how full the context has been, the warm streak, the turn's pace.
+  const zoneMore = (x: number, y: number, w: number) => {
+    if (!st) return ''
+    const pts = st.ctx ?? []
+    const cur = pts.length ? pts[pts.length - 1] : undefined
+    let spark = ''
+    if (pts.length >= 2) {
+      const hi = Math.max(40, ...pts)
+      const dx = w / (pts.length - 1)
+      const line = pts.map((v, i) => `${(i * dx).toFixed(1)},${(14 - (v / hi) * 13).toFixed(1)}`).join(' ')
+      spark = `<g transform="translate(${x} ${y + 30})"><polyline points="${line}" fill="none" stroke="${HUEM}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${w}" cy="${(14 - ((cur ?? 0) / hi) * 13).toFixed(1)}" r="2.2" fill="${HUEM}"/></g>`
+    } else {
+      spark = t(x, y + 40, 'builds up per turn', { size: 11, w: 500 })
+    }
+    const row = (ly: number, lab: string, val: string, fill = TEXT) =>
+      t(x, ly, lab, { ls: 1.4 }) + t(x + w, ly, val, { size: 15, w: 600, fill, anchor: 'end' })
+    const run = st.warmRun ?? 0
+    const cap = (ly: number, txt: string) => t(x + w, ly, txt, { size: 11, w: 500, anchor: 'end' })
+    const pace = [
+      st.toolsPerMin !== undefined ? `${st.toolsPerMin >= 10 ? Math.round(st.toolsPerMin) : st.toolsPerMin.toFixed(1)}/min` : '',
+      st.avgTurnMs !== undefined ? `${fmtIdle(st.avgTurnMs) === '0m' ? Math.round(st.avgTurnMs / 1000) + 's' : fmtIdle(st.avgTurnMs)} avg` : '',
+    ].filter(Boolean).join(' · ')
+    return (
+      row(y + 22, 'CTX', cur === undefined ? '—' : `${cur}%`) +
+      spark +
+      row(y + 66, 'STREAK', `${run}`, run > 0 ? '#3ecf6e' : TEXT) +
+      cap(y + 80, `warm · ${st.colds ?? 0} cold`) +
+      row(y + 104, 'TURN', `${st.turnTools ?? 0} tools`) +
+      (pace ? cap(y + 118, pace) : '')
+    )
+  }
+  const STATS_H = 82
   let H: number
   let g: string
   if (kind === 'wide') {
-    H = 110
+    // With room right of the cost columns the figures sit there; without, they take a row below.
+    const side2 = W - 1004 >= 235
+    const side = side2 || W - 1034 >= 136
+    H = (side2 ? 126 : 104) + (st && !side ? STATS_H : 0)
     // 92 px a model column on the page's full width; tighter near the switch point,
     // where the last column still needs about 90 px for its price.
-    const colW = Math.min(92, Math.floor((W - 640 - 103) / 3))
-    g = zoneIdle(13, 0, 290, { header: true }) + vline(314, 10, H - 24) + zoneSize(340, 0, 260) + vline(614, 10, H - 24) + zoneCost(640, 0, colW)
+    const colW = side2 ? 84 : Math.min(92, Math.floor((W - 640 - 103) / 3))
+    g = zoneIdle(13, 0, 290, { header: true }) + vline(314, 10, side2 ? 100 : 80) + zoneSize(340, 0, 260) + vline(614, 10, side2 ? 100 : 80) + zoneCost(640, 0, colW) + (side2 ? vline(990, 10, 100) + zoneSide(1004, 0, 108) + zoneMore(1128, 0, W - 1128 - 13) : side ? vline(1018, 10, 86) + zoneSide(1034, 0, W - 1034 - 13) : st ? hline(104) + zoneStats(104) : '')
   } else if (kind === 'stacked') {
-    H = 214
+    const side = W - 640 >= 130
+    const more = side && W - 668 >= 96
+    H = (more ? 224 : 200) + (st && !side ? STATS_H : 0)
     g =
       zoneIdle(13, 0, 290, { header: true }) +
       vline(314, 10, 72) +
-      zoneSize(340, 0, W - 340 - 13) +
-      hline(104) +
-      zoneCost(13, 104, Math.min(160, (W - 26) / 4))
+      zoneSize(340, 0, side ? 260 : W - 340 - 13) +
+      (side ? vline(612, 10, 72) + zoneSide(628, 0, W - 628 - 13) : '') +
+      hline(100) +
+      zoneCost(13, 98, Math.min(160, (W - 26) / 4)) +
+      (more ? vline(660, 108, 100) + zoneMore(674, 98, W - 674 - 13) : '') +
+      (st && !side ? hline(200) + zoneStats(200) : '')
   } else {
     // Narrow: the cache row above already shows Robo and the chip.
-    H = 250
+    H = 250 + (st ? STATS_H - 6 : 0)
     g =
       zoneIdle(13, 0, W - 26, { compact: true }) +
       hline(92) +
       zoneSize(13, 92, W - 26, { compact: true }) +
       hline(150) +
-      zoneCost(13, 152, (W - 26) / 4, { compact: true })
+      zoneCost(13, 152, (W - 26) / 4, { compact: true }) +
+      (st ? hline(250) + zoneStats(250, { compact: true }) : '')
   }
   const h = H + CARD_TOP
   const body = `<rect width="${W}" height="${h}" fill="${BG}"/><g transform="translate(0 ${CARD_TOP})">` + hline(0) + g + '</g>'

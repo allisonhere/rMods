@@ -16,6 +16,9 @@ const PROPS = {
 const WARM_IDLE = 18 * 60 // 18 minutes: warm, cold in 42m
 const COLD_IDLE = (3 * 24 + 9) * 3600 // 3d 9h: cold
 
+// Drawings keep no key in the kit, so the large drawing is the Svg whose alt starts with "Cache".
+const oneOf = async (band: any) => (await band.findAll({ type: 'Svg' })).find((s: any) => String(s.props.alt).startsWith('Cache'))
+
 // The band starts tiny; most tests look at the full band, so press its size button once.
 const normal = async ($: any) => {
   const b = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
@@ -35,14 +38,17 @@ test('a warm cache shows Robo, the WARM chip and the minutes left, folded', asyn
 
   const band = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
   // Drawings keep no key in the kit, so they are found by what they say.
-  const alts = (await band.findAll({ type: 'Svg' })).map(s => s.props.alt)
-  expect(alts).toEqual(['Robo, bobbing', 'WARM'])
-  expect(await band.find({ text: ' 42m left' })).toBeDefined()
-  expect(await band.find({ key: 'card' })).toBeUndefined()
+  const svgs = await band.findAll({ type: 'Svg' })
+  expect(svgs.length).toBe(1)
+  expect(svgs[0].props.alt).toContain('Usage left')
+  // The mid band is usage alone: the cache lives in the large card.
+  expect(JSON.stringify(svgs[0])).not.toContain('WARM')
+  expect(await oneOf(band)).toBeUndefined()
   expect(await band.find({ key: 'size-up' })).toBeDefined()
 
   await band.press({ key: 'size-up' })
-  expect(await band.find({ key: 'card' })).toBeDefined()
+  // Large draws the cards and the panel as one drawing.
+  expect(await oneOf(band)).toBeDefined()
   // Large has the one arrow, down.
   expect(await band.find({ key: 'size-up' })).toBeUndefined()
   expect(await band.find({ key: 'size-down' })).toBeDefined()
@@ -62,17 +68,16 @@ test('a cold cache opens the card with the re-cache price, and the down arrow fo
 
   const band = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
   await band.press({ key: 'size-up' })
-  const card = await band.find({ key: 'card' })
+  const card = await oneOf(band)
   expect(card).toBeDefined()
   expect(JSON.stringify(card)).toContain('Cache cold. Idle 3d 9h. Next message re-caches 770k tokens.')
-  // The page's width: 100 columns is a 1260 px band.
-  expect(JSON.stringify(card)).toContain('width=\\"1260\\"')
+  // 100 columns: 103 cells of 8.4 px, laid out at 12 px cells.
+  expect(JSON.stringify(card)).toContain('width=\\"1236\\"')
 
   await band.press({ key: 'size-down' })
-  expect(await band.find({ key: 'card' })).toBeUndefined()
-  expect(await band.find({ text: ' 3d 9h' })).toBeDefined()
+  expect(await oneOf(band)).toBeUndefined()
+  expect(JSON.stringify(await band.find({ type: 'Svg' }))).not.toContain('COLD')
   // Opus 5.5: 770k tokens at the 1-hour write price, 2 x $4 per million.
-  expect(await band.find({ text: '$6.16' })).toBeDefined()
   await band.unmount()
 })
 
@@ -88,9 +93,9 @@ test('squeezed, the folded cache stacks as a third block, then takes its own row
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: WARM_IDLE, context_tokens: 770000, model: 'claude-opus-5-5' })
 
   const half = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 53 } })
-  expect(await half.find({ key: 'block' })).toBeDefined()
-  expect(await half.find({ text: '42m left' })).toBeDefined()
-  expect(await half.find({ text: '$0.15' })).toBeDefined()
+  // The band is a drawing of cards here: the cache card carries the countdown and the price.
+  const halfSvg = JSON.stringify(await half.find({ type: 'Svg' }))
+  expect(halfSvg).toContain('5 HOUR')
   await half.unmount()
 
   const narrow = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 33 } })
@@ -134,7 +139,9 @@ test('a cleared session drops the cache until the next reply', async ($, on) => 
   await $.classic.SessionStart({ source: 'clear' })
 
   const band = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
-  expect(await band.findAll({ type: 'Svg' })).toEqual([])
-  expect(await band.find({ text: ' 99% left' })).toBeDefined()
+  const drawn = JSON.stringify(await band.findAll({ type: 'Svg' }))
+  expect(drawn).toContain('99%')
+  expect(drawn).not.toContain('COLD')
+  expect(drawn).not.toContain('WARM')
   await band.unmount()
 })

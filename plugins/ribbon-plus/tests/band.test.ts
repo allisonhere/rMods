@@ -38,11 +38,18 @@ test('the band shows percent left for each window once a reading lands', async (
       component: 'AbovePrompt',
       props: PROPS,
     })
-    expect(await band.find({ text: '42% left' })).toBeDefined()
-    expect(await band.find({ text: '87.5% left' })).toBeDefined()
-    // 7D (87.5% left) draws before 5H (42% left)
-    const all = JSON.stringify(await band.find({ type: 'Box' }))
-    expect(all.indexOf('7D')).toBeLessThan(all.indexOf('5H'))
+    if (surface === 'terminal') {
+      expect(await band.find({ text: '42% left' })).toBeDefined()
+      expect(await band.find({ text: '87.5% left' })).toBeDefined()
+      // 7D (87.5% left) draws before 5H (42% left)
+      const all = JSON.stringify(await band.find({ type: 'Box' }))
+      expect(all.indexOf('7D')).toBeLessThan(all.indexOf('5H'))
+    } else {
+      // A surface with SVG draws a card for each window; its alt says what they hold.
+      const alt = String((await band.find({ type: 'Svg' }))?.props.alt)
+      expect(alt).toContain('5 HOUR 42%')
+      expect(alt.indexOf('7 DAY')).toBeLessThan(alt.indexOf('5 HOUR'))
+    }
     await band.unmount()
   }
 })
