@@ -1,11 +1,28 @@
 # rMods
 
-Two mods for Claude Code.
+Two mods for Claude Code: **mod-curator** and **ribbon-plus**. Install steps are at the end.
 
-- **mod-curator**: `/mods` opens a pane listing your installed plugins, with Turn on / Turn off and Remove buttons.
-- **ribbon-plus**: a fork of [ribbon](https://github.com/robonuggets/ribbon) (MIT). A usage band above the prompt in three sizes (tiny, mid and large), with bars that run from green to red as a window drains, recent activity, and session cost and burn rate. Arrows or `/ribbon-plus` switch the size, and the choice is remembered. See [its README](plugins/ribbon-plus/README.md) for screenshots of each size.
+## mod-curator
 
-![ribbon-plus in its large size](plugins/ribbon-plus/assets/large.png)
+`/mods` opens a pane listing your installed plugins. Each one has buttons to turn it on or off, or to remove it (Remove asks for a second press first). Refresh re-reads the list. Changes apply after `/reload-plugins`.
+
+## ribbon-plus
+
+A fork of [ribbon](https://github.com/robonuggets/ribbon) (MIT). A usage band above the prompt that shows how much of your 7-day and 5-hour usage is left, with bars that run from green to red as a window drains. It comes in three sizes. The arrows on the right move between them, `/ribbon-plus` cycles through them, and the size you pick is remembered.
+
+**Small:** one row with bars for each window, the cache countdown and an activity strip.
+
+![ribbon-plus, small](plugins/ribbon-plus/assets/tiny.png)
+
+**Medium:** a card for each window with the percent left, a bar and the reset time, plus a card of recent activity.
+
+![ribbon-plus, medium](plugins/ribbon-plus/assets/mid.png)
+
+**Large:** the cards over a full-width panel with the prompt cache, what the next message costs on each model, and the session's cost, length, burn rate, context fill, warm streak and turn pace.
+
+![ribbon-plus, large](plugins/ribbon-plus/assets/large.png)
+
+More detail is in [its README](plugins/ribbon-plus/README.md).
 
 ## Install
 

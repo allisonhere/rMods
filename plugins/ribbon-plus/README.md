@@ -31,6 +31,4 @@ The mid cards over a full-width panel: how long the cache has been idle, how muc
 - The drawings are sized for the Claude desktop app. The terminal gets the text form of tiny and mid.
 - Turn the original ribbon off before installing this, so two bands don't show.
 
-The screenshots are renders of the mod's own drawings with sample figures.
-
 The embedded font is [Outfit](https://github.com/Outfitio/Outfit-Fonts), under the SIL Open Font License 1.1.
