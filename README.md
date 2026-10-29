@@ -12,15 +12,15 @@ A fork of [ribbon](https://github.com/robonuggets/ribbon) (MIT). A usage band ab
 
 **Small:** one row with bars for each window, the cache countdown and an activity strip.
 
-![ribbon-plus, small](plugins/ribbon-plus/assets/tiny.png)
+![ribbon-plus, small](plugins/ribbon-plus/assets/tiny-v2.png)
 
 **Medium:** a card for each window with the percent left, a bar and the reset time, plus a card of recent activity.
 
-![ribbon-plus, medium](plugins/ribbon-plus/assets/mid.png)
+![ribbon-plus, medium](plugins/ribbon-plus/assets/mid-v2.png)
 
 **Large:** the cards over a full-width panel with the prompt cache, what the next message costs on each model, and the session's cost, length, burn rate, context fill, warm streak and turn pace.
 
-![ribbon-plus, large](plugins/ribbon-plus/assets/large.png)
+![ribbon-plus, large](plugins/ribbon-plus/assets/large-v2.png)
 
 More detail is in [its README](plugins/ribbon-plus/README.md).
 

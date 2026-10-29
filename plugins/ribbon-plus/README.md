@@ -10,19 +10,19 @@ It has three sizes. The arrows on the right move between them, and `/ribbon-plus
 
 One quiet row: bars for each window, the cache countdown, and an activity strip that fills the rest of the row. `▲` opens mid.
 
-![Tiny: one row of bars, the cache countdown and an activity strip](assets/tiny.png)
+![Tiny: one row of bars, the cache countdown and an activity strip](assets/tiny-v2.png)
 
 ## Mid
 
 A card for each window with the percent left, a bar and the reset time, plus a card of recent activity. `▼` goes back to tiny, `▲` opens large.
 
-![Mid: cards for 7 day and 5 hour usage, and recent activity](assets/mid.png)
+![Mid: cards for 7 day and 5 hour usage, and recent activity](assets/mid-v2.png)
 
 ## Large
 
 The mid cards over a full-width panel: how long the cache has been idle, how much context it holds, and what the next message costs on each model (yours is marked YOU). On the right are the session's figures: cost so far, session length, and how fast the 5-hour window is burning. When the pane is wide enough, a second column adds context fill over time, the warm-cache streak, and the current turn's tool calls. `▼` goes back to mid.
 
-![Large: the cards over a panel with the cache, next-message costs and session stats](assets/large.png)
+![Large: the cards over a panel with the cache, next-message costs and session stats](assets/large-v2.png)
 
 ## Notes
 
