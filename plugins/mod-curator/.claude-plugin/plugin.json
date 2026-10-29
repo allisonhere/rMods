@@ -1,0 +1,1 @@
+{ "name": "mod-curator", "version": "0.1.0", "description": "Pane to list, turn on/off and remove installed plugins and mods", "types": "./types/index.d.ts" }

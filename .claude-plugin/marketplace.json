@@ -1,0 +1,8 @@
+{
+  "name": "allie-mods",
+  "owner": { "name": "Allie" },
+  "plugins": [
+    { "name": "mod-curator", "source": "./plugins/mod-curator", "description": "Pane to list, turn on/off and remove installed plugins and mods (/mods)" },
+    { "name": "ribbon-plus", "source": "./plugins/ribbon-plus", "description": "Fork of ribbon: one-row bars by default, green-to-red ramp, size remembered (/ribbon-plus)" }
+  ]
+}
