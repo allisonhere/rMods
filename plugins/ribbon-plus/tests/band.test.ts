@@ -81,6 +81,7 @@ test('the default band is one row of bars, and its button opens the full band', 
   const band = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
   expect(await band.find({ text: ' 42%' })).toBeDefined()
   expect(await band.find({ text: 'USAGE' })).toBeUndefined()
+  expect(await band.find({ text: /▁▁▁/ })).toBeDefined()
   await band.press({ key: 'size' })
   expect(await band.find({ text: '42% left' })).toBeDefined()
 })

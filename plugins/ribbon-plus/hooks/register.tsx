@@ -7,6 +7,8 @@ import {
   bandPx, cardSvg, chipSvg, costOf, familyOf, fmtIdle, kindOf, mineModel, roboSvg, usd,
 } from './cache-art'
 import type { CacheView } from './cache-art'
+import { activitySvg, activityText, push } from './activity'
+import type { Activity } from './activity'
 
 // A band above the prompt in a warm dark look: card surface, cream text,
 // dot-matrix bars. Shows how much of each usage window is LEFT, 7-day first, then
@@ -31,6 +33,8 @@ const fold = atom({ plugin: 'ribbon-plus', key: 'fold' } as const, null as Fold 
 // 'tiny' (the default) is one quiet row of bars; 'normal' is the full band.
 const size = atom({ plugin: 'ribbon-plus', key: 'size' } as const, 'tiny' as Size)
 // The choice is kept in the plugin's store so it holds across sessions.
+const activity = atom({ plugin: 'ribbon-plus', key: 'activity' } as const, { active: false, at: [] } as Activity, { shape: 'activity-1' })
+
 const flip = async ($: EngineInterface): Promise<void> => {
   const next = (await read($, size)) === 'tiny' ? 'normal' : 'tiny'
   await update($, size, () => next)
@@ -117,12 +121,18 @@ const measure = async ($: EngineInterface, lastAt: number | null, model: string 
 }
 
 export const register: Register = on => {
+  // The strip scrolls with time, so it redraws every few seconds while there is recent activity.
+  let isRecent = false
+
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'ribbon-plus', description: 'Toggle the ribbon between tiny (one short row) and normal' })
     const saved = await $.store.get('size')
     if (saved === 'tiny' || saved === 'normal') await update($, size, () => saved)
     await pull($)
     $.clock.every(TICK_MS, () => $.ui.invalidate('ui.render'))
+    $.clock.every(2500, () => {
+      if (isRecent) $.ui.invalidate('ui.render')
+    })
     return next(e)
   })
 
@@ -130,6 +140,21 @@ export const register: Register = on => {
     await flip($)
     return { text: `Ribbon: ${(await read($, size)) === 'tiny' ? 'tiny' : 'normal'}.` }
   })
+
+  // Activity: the time of each prompt, model request and tool call, drawn as a strip of bars.
+  on('prompt.submit', async ($, e, next) => {
+    const now = await $.clock.now()
+    await update($, activity, a => push(a, now, true))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('tool.call', async ($, e, next) => {
+    const now = await $.clock.now()
+    await update($, activity, a => push(a, now, true))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
@@ -163,6 +188,7 @@ export const register: Register = on => {
   on('turn.step', async function* ($, e, next) {
     if (!e.agentId) {
       const now = await $.clock.now()
+      await update($, activity, a => push(a, now, true))
       await update($, cache, c => ({ lastAt: now, tokens: c?.tokens ?? 0, window: c?.window ?? 0, model: c?.model ?? null }))
     }
     yield* next(e)
@@ -172,6 +198,7 @@ export const register: Register = on => {
     const r = await next(e)
     if (e.agentId) return r
     const now = await $.clock.now()
+    await update($, activity, a => push(a, now, false))
     const c = await read($, cache)
     // turn.step stamps the exact request time; when no step of this turn did, the turn's end is the floor.
     const lastAt = !c || now - c.lastAt > e.durationMs ? now : c.lastAt
@@ -196,6 +223,18 @@ export const register: Register = on => {
       const cols = e.props.bodyColumns ?? e.viewport?.columns ?? 100
       const cellsT = cols >= 72 ? TINY_CELLS : cols >= 52 ? 5 : cols >= 36 ? 3 : 0
       const showCache = cols >= 72
+      const pulse = await read($, activity)
+      isRecent = (pulse.active || now - (pulse.at[pulse.at.length - 1] ?? 0) < 60_000)
+      // The activity strip takes whatever room the row leaves, so it grows and shrinks with the pane.
+      const used = cols >= 72 ? 54 : cols >= 52 ? 38 : cols >= 36 ? 30 : 20
+      const free = Math.max(0, cols - used - 2)
+      const beatPx = Math.min(420, free * 10)
+      const beat =
+        free < 5 ? null : Svg ? (
+          <Svg key="activity" source={activitySvg(beatPx, 18, pulse, now)} alt={pulse.active ? 'Claude is working' : 'recent activity'} width={beatPx} height={18} isInteractive />
+        ) : (
+          <Text color={pulse.active ? '#3ecf6e' : MUTED}>{activityText(pulse, now, Math.min(40, free))}</Text>
+        )
       const bits = list.map(w => {
         const left = Math.max(0, Math.round(100 - w.percentUsed))
         const col = rampColor(left)
@@ -218,6 +257,8 @@ export const register: Register = on => {
             </Text>
           ) : null}
           <Box flexGrow={1} />
+          {beat}
+          <Text> </Text>
           <Button key="size" label="▲" onPress={() => flip($)} />
         </Box>
       )

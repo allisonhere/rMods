@@ -14,8 +14,11 @@ export type Fold = { mode: 'warm' | 'cold'; open: boolean }
 /** How tall the band is: one short row, or the full band. */
 export type Size = 'tiny' | 'normal'
 
+/** When prompts, model requests and tool calls happened lately, and whether a turn is running. */
+export type Activity = { active: boolean; at: number[] }
+
 declare module 'claude-code' {
   interface PluginState {
-    'ribbon-plus': { windows: Window[]; cache: CacheFacts | null; fold: Fold | null; size: Size }
+    'ribbon-plus': { windows: Window[]; cache: CacheFacts | null; fold: Fold | null; size: Size; activity: Activity }
   }
 }
