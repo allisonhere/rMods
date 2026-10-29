@@ -3,7 +3,9 @@
 Two mods for Claude Code.
 
 - **mod-curator**: `/mods` opens a pane listing your installed plugins, with Turn on / Turn off and Remove buttons.
-- **ribbon-plus**: a fork of [ribbon](https://github.com/robonuggets/ribbon) (MIT). A quiet one-row usage band above the prompt, with bars that run from green to red as a window drains, a pane-width-aware layout, and a remembered tiny/normal size. `/ribbon-plus` toggles the size.
+- **ribbon-plus**: a fork of [ribbon](https://github.com/robonuggets/ribbon) (MIT). A usage band above the prompt in three sizes (tiny, mid and large), with bars that run from green to red as a window drains, recent activity, and session cost and burn rate. Arrows or `/ribbon-plus` switch the size, and the choice is remembered. See [its README](plugins/ribbon-plus/README.md) for screenshots of each size.
+
+![ribbon-plus in its large size](plugins/ribbon-plus/assets/large.png)
 
 ## Install
 
