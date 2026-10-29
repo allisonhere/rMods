@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { CacheFacts, Fold, Size, Window } from '../types'
+import type { CacheFacts, Size, Window } from '../types'
 import {
   BG, EMPTY, HUE, INK, MUTED, ROBO_SIZE, TEXT, TTL_MIN, TTL_MS, WORD,
   bandPx, cardSvg, chipSvg, costOf, familyOf, fmtIdle, kindOf, mineModel, roboSvg, usd,
@@ -16,8 +16,8 @@ import type { Activity } from './activity'
 //
 // After the first reply it also shows the prompt cache: WARM (red, Robo bobbing)
 // for an hour after the last request, then COLD (blue, Robo frozen) with what the
-// next message costs to re-cache. Hide / Show folds the card; warm starts folded,
-// cold starts open, and a choice holds until the cache flips. Zero token cost:
+// next message costs to re-cache. Three sizes, moved with arrows: tiny (one row of
+// bars), mid (the full band), large (the band with the cache card). Zero token cost:
 // it reads the engine's own figures and draws.
 
 const CELLS = 10
@@ -29,16 +29,24 @@ const TICK_MS = 30_000
 
 const windows = atom({ plugin: 'ribbon-plus', key: 'windows' } as const, [] as Window[])
 const cache = atom({ plugin: 'ribbon-plus', key: 'cache' } as const, null as CacheFacts | null)
-const fold = atom({ plugin: 'ribbon-plus', key: 'fold' } as const, null as Fold | null)
 // 'tiny' (the default) is one quiet row of bars; 'normal' is the full band.
 const size = atom({ plugin: 'ribbon-plus', key: 'size' } as const, 'tiny' as Size)
 // The choice is kept in the plugin's store so it holds across sessions.
 const activity = atom({ plugin: 'ribbon-plus', key: 'activity' } as const, { active: false, at: [] } as Activity, { shape: 'activity-1' })
 
-const flip = async ($: EngineInterface): Promise<void> => {
-  const next = (await read($, size)) === 'tiny' ? 'normal' : 'tiny'
+const setSize = async ($: EngineInterface, next: Size): Promise<void> => {
   await update($, size, () => next)
   await $.store.set('size', next)
+}
+
+/** One step smaller: the card folds away first, then the band shrinks to its one row. */
+const stepDown = async ($: EngineInterface): Promise<void> => {
+  await setSize($, (await read($, size)) === 'large' ? 'mid' : 'tiny')
+}
+
+const cycle = async ($: EngineInterface): Promise<void> => {
+  const now = await read($, size)
+  await setSize($, now === 'tiny' ? 'mid' : now === 'mid' ? 'large' : 'tiny')
 }
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
@@ -127,7 +135,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'ribbon-plus', description: 'Toggle the ribbon between tiny (one short row) and normal' })
     const saved = await $.store.get('size')
-    if (saved === 'tiny' || saved === 'normal') await update($, size, () => saved)
+    if (saved === 'tiny' || saved === 'mid' || saved === 'large') await update($, size, () => saved)
+    if (saved === 'normal') await update($, size, () => 'mid')
     await pull($)
     $.clock.every(TICK_MS, () => $.ui.invalidate('ui.render'))
     $.clock.every(2500, () => {
@@ -137,8 +146,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'ribbon-plus' }, async $ => {
-    await flip($)
-    return { text: `Ribbon: ${(await read($, size)) === 'tiny' ? 'tiny' : 'normal'}.` }
+    await cycle($)
+    return { text: `Ribbon: ${await read($, size)}.` }
   })
 
   // Activity: the time of each prompt, model request and tool call, drawn as a strip of bars.
@@ -172,7 +181,6 @@ export const register: Register = on => {
     const r = await next(e)
     if (e.source === 'clear' || e.source === 'compact') {
       await update($, cache, () => null)
-      await update($, fold, () => null)
     } else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
       const now = await $.clock.now()
       const lastAt = now - e.seconds_since_last_response * 1000
@@ -259,7 +267,7 @@ export const register: Register = on => {
           <Box flexGrow={1} />
           {beat}
           <Text> </Text>
-          <Button key="size" label="▲" onPress={() => flip($)} />
+          <Button key="size" label="▲" onPress={() => setSize($, 'mid')} />
         </Box>
       )
     }
@@ -267,7 +275,8 @@ export const register: Register = on => {
     if (list.length === 0 && !view) {
       return (
         <Box backgroundColor={BG} paddingX={1}>
-          <Text color={MUTED}>USAGE · waiting for the first reply</Text>
+          <Text color={MUTED}>USAGE · waiting for the first reply </Text>
+          <Button key="size-down" label="▼" onPress={() => stepDown($)} />
         </Box>
       )
     }
@@ -323,12 +332,11 @@ export const register: Register = on => {
     }
 
     const label = (
-      <Box key="label" flexShrink={0} marginRight={isWide ? 2 : 2} flexDirection={isWide ? 'row' : 'column'}>
-        <Text color={TEXT} bold>{isWide ? 'USAGE ' : 'USAGE'}</Text>
-        {isWide ? null : <Box height={1} />}
-        <Button key="size" label={isWide ? '▼ Tiny' : '▼'} onPress={() => flip($)} />
+      <Box key="label" flexShrink={0} marginRight={2}>
+        <Text color={TEXT} bold>USAGE</Text>
       </Box>
     )
+    const down = <Button key="size-down" label="▼" onPress={() => stepDown($)} />
     const usage = list.length > 0
       ? list.map(isWide ? wide : stacked)
       : [<Box key="wait" flexShrink={0} marginRight={3}><Text color={MUTED}>waiting for the first reply</Text></Box>]
@@ -339,6 +347,8 @@ export const register: Register = on => {
         <Box flexDirection="row" backgroundColor={BG} paddingX={1}>
           {label}
           {usage}
+          <Box flexGrow={1} />
+          {down}
         </Box>
       )
     }
@@ -347,12 +357,8 @@ export const register: Register = on => {
     const cold = mode === 'cold'
     const hue = HUE[mode]
     const mine = mineModel(view)
-    const stored = await read($, fold)
-    // Folding needs the card, and the card is a drawing: the terminal stays folded.
-    const open = Svg !== null && (stored && stored.mode === mode ? stored.open : cold)
-    const toggle = () =>
-      update($, fold, f => ({ mode, open: !(f && f.mode === mode ? f.open : mode === 'cold') }))
-
+    // The card is a drawing, so only the surfaces with SVG show the large size.
+    const open = Svg !== null && (await read($, size)) === 'large'
     const badge = Svg
       ? [
           <Svg key="robo" source={roboSvg(mode)} alt={cold ? 'Robo, frozen' : 'Robo, bobbing'} width={ROBO_SIZE} height={ROBO_SIZE} isInteractive />,
@@ -372,11 +378,12 @@ export const register: Register = on => {
         ]
       : [<Text key="left" color={hue} bold>{` ${Math.max(0, TTL_MIN - view.idleMin)}m left`}</Text>]
 
-    const button = Svg ? (
-      <Box key="fold" flexShrink={0} alignItems="flex-start">
-        <Button key="cache-fold" label={open ? 'Hide' : 'Show'} onPress={toggle} />
+    const button = (
+      <Box key="arrows" flexShrink={0} alignItems="flex-start" flexDirection="row">
+        {down}
+        {Svg && !open ? <Button key="size-up" label="▲" onPress={() => setSize($, 'large')} /> : null}
       </Box>
-    ) : null
+    )
     const grow = <Box key="grow" flexGrow={1} />
 
     let rows

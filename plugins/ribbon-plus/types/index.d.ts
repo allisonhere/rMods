@@ -8,17 +8,15 @@ export type Window = { kind: string; percentUsed: number; resetsAt?: string }
  */
 export type CacheFacts = { lastAt: number; tokens: number; window: number; model: string | null }
 
-/** Whether the cache card is open, remembered only for the state it was set in. */
-export type Fold = { mode: 'warm' | 'cold'; open: boolean }
 
-/** How tall the band is: one short row, or the full band. */
-export type Size = 'tiny' | 'normal'
+/** How tall the band is: one short row, the full band, or the full band with the cache card. */
+export type Size = 'tiny' | 'mid' | 'large'
 
 /** When prompts, model requests and tool calls happened lately, and whether a turn is running. */
 export type Activity = { active: boolean; at: number[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    'ribbon-plus': { windows: Window[]; cache: CacheFacts | null; fold: Fold | null; size: Size; activity: Activity }
+    'ribbon-plus': { windows: Window[]; cache: CacheFacts | null; size: Size; activity: Activity }
   }
 }

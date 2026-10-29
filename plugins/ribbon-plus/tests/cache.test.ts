@@ -39,15 +39,17 @@ test('a warm cache shows Robo, the WARM chip and the minutes left, folded', asyn
   expect(alts).toEqual(['Robo, bobbing', 'WARM'])
   expect(await band.find({ text: ' 42m left' })).toBeDefined()
   expect(await band.find({ key: 'card' })).toBeUndefined()
-  expect((await band.find({ key: 'cache-fold' }))?.props.label).toBe('Show')
+  expect(await band.find({ key: 'size-up' })).toBeDefined()
 
-  await band.press({ key: 'cache-fold' })
+  await band.press({ key: 'size-up' })
   expect(await band.find({ key: 'card' })).toBeDefined()
-  expect((await band.find({ key: 'cache-fold' }))?.props.label).toBe('Hide')
+  // Large has the one arrow, down.
+  expect(await band.find({ key: 'size-up' })).toBeUndefined()
+  expect(await band.find({ key: 'size-down' })).toBeDefined()
   await band.unmount()
 })
 
-test('a cold cache opens the card with the re-cache price, and Hide folds it to one row', async ($, on) => {
+test('a cold cache opens the card with the re-cache price, and the down arrow folds it to the full band', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: NOW })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -59,13 +61,14 @@ test('a cold cache opens the card with the re-cache price, and Hide folds it to 
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: COLD_IDLE, context_tokens: 770000, model: 'claude-opus-5-5' })
 
   const band = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  await band.press({ key: 'size-up' })
   const card = await band.find({ key: 'card' })
   expect(card).toBeDefined()
   expect(JSON.stringify(card)).toContain('Cache cold. Idle 3d 9h. Next message re-caches 770k tokens.')
   // The page's width: 100 columns is a 1260 px band.
   expect(JSON.stringify(card)).toContain('width=\\"1260\\"')
 
-  await band.press({ key: 'cache-fold' })
+  await band.press({ key: 'size-down' })
   expect(await band.find({ key: 'card' })).toBeUndefined()
   expect(await band.find({ text: ' 3d 9h' })).toBeDefined()
   // Opus 5.5: 770k tokens at the 1-hour write price, 2 x $4 per million.
@@ -92,7 +95,7 @@ test('squeezed, the folded cache stacks as a third block, then takes its own row
 
   const narrow = await $.ui.mount({ plugin: 'ribbon-plus', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 33 } })
   expect(await narrow.find({ key: 'cache' })).toBeDefined()
-  await narrow.press({ key: 'cache-fold' })
+  await narrow.press({ key: 'size-up' })
   // Narrow's card is the compact one: 38 columns is a 456 px band.
   expect(JSON.stringify(await narrow.find({ key: 'card' }))).toContain('width=\\"456\\"')
   await narrow.unmount()
@@ -113,7 +116,7 @@ test('the terminal draws the cache as text, with no drawings and no fold button'
   expect(await band.find({ text: ' COLD ' })).toBeDefined()
   expect(await band.find({ text: '$6.16' })).toBeDefined()
   expect(await band.findAll({ type: 'Svg' })).toEqual([])
-  expect(await band.find({ key: 'cache-fold' })).toBeUndefined()
+  expect(await band.find({ key: 'size-up' })).toBeUndefined()
   expect(await band.find({ key: 'card' })).toBeUndefined()
   await band.unmount()
 })
